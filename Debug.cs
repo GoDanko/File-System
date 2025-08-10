@@ -3,7 +3,6 @@ using System.IO;
 
 namespace Debugging
 {
-
     static class EventLogger {
 
         private static short MaxEventFiles = 255;     // Keep Low to not over-consume ROM memory

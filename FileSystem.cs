@@ -2,29 +2,33 @@ using System;
 using FileSystem.HostFileAPI;
 using FileSystem.FSComponents;
 using Debugging;
+using System.Text;
 
 namespace FileSystem.MemoryManager {
 
     class DiscAccess {
-        internal ManageBinary BinaryFile;
-        internal const ushort HeaderSize = 18;
-        internal const ushort BracketMetadataSize = 22;
-        internal const ushort AvailablePartitions = 65535;
-        internal ushort ByteSizeOfPartition = 256;
-        internal ushort AddressTableOffset;
-        internal ushort TotalSizePerAddressEntry = 32;
-        int TotalByteMemory;
+        internal const ushort BracketMetaSizeNoID = 5;      // SET here (const)
+        internal ushort ByteSizeOfPartition;                // SET at line 24
+        internal int DataPartitions;                        // SET at line 25
+        internal ManageBinary BinaryFile;                   // SET at line 31
+        internal ushort MinBracketSize = 32;                // SET at line 39
+        internal int HeaderOffset;                          // SET at line 65
+        internal int AddressTableOffset;                    // SET at line 77
+        // Assumes -4 optional bytes containing the ID
+        int TotalByteMemory;                                // SET at line 88
+        internal ushort HeaderSize = 18;                    // SET at line 124
 
 
-        public DiscAccess(ushort partitionByteSize)
+        public DiscAccess(ushort partitionByteSize, int memoryPartitions)
         {
             ByteSizeOfPartition = partitionByteSize;
+            DataPartitions = memoryPartitions;
         }
 
-        internal static DiscAccess InitialiseStorage(ushort partitionByteSize = 256) {
-            DiscAccess storage = new DiscAccess(partitionByteSize);
-            if (File.Exists(Path.Combine(ManageBinary.LocalAppPath, "Schefflera", "Sys", "SysMemory.bin"))) {
-                storage.BinaryFile = new ManageBinary(Path.Combine(ManageBinary.LocalAppPath, "Schefflera", "Sys"), "SysMemory.bin");
+        internal static DiscAccess InitialiseStorage(ushort partitionByteSize = 256, int memoryPartitions = 65535) {
+            DiscAccess storage = new DiscAccess(partitionByteSize, memoryPartitions);
+            if (File.Exists(Path.Combine(ManageBinary.LocalAppPath, "1A.FS-TestingGround", "FS.bin"))) {
+                storage.BinaryFile = new ManageBinary(Path.Combine(ManageBinary.LocalAppPath, "1A.FS-TestingGround"), "FS.bin");
                 if (EvaluateDisc(storage)) { return storage; }
                 else { return storage.CreateNewDisc(); }
             }
@@ -32,14 +36,10 @@ namespace FileSystem.MemoryManager {
         }
 
         internal DiscAccess CreateNewDisc() {
-            AddressTableOffset = (ushort)(AvailablePartitions / ((TotalSizePerAddressEntry - BracketMetadataSize) / 2));
-            TotalByteMemory = (ByteSizeOfPartition + 2) * (AvailablePartitions + AddressTableOffset);
-            BinaryFile = new ManageBinary(Path.Combine(ManageBinary.LocalAppPath, "Schefflera", "Sys"), "SysMemory.bin");
-            BinaryFile.BinaryByteMaxSize = TotalByteMemory;
-
+            MinBracketSize = (ByteSizeOfPartition < 256) ? (ushort)32 : (ushort)(ByteSizeOfPartition / 8);
+            BinaryFile = new ManageBinary(Path.Combine(ManageBinary.LocalAppPath, "1A.FS-TestingGround"), "FS.bin");
             BinaryFile.OverwriteBinary(new byte[0]);
             BinaryFile = PartitionVirtualDisc();
-            BinaryFile.WriteToBinary(CreateDiscHeader(), 2);
             EventLogger.Report("DISC MANAGER: Created new disc");
             return this;
         }
@@ -53,57 +53,77 @@ namespace FileSystem.MemoryManager {
 
         internal ManageBinary PartitionVirtualDisc()
         {
-            int i = 1;
+            BinaryFile.AppendToBinary(CreateDiscHeader());
+
+            int i = 0;
+            Span<byte> MetaDataIDMap = new byte[257];
+            while (i < 255) {
+                MetaDataIDMap[0] = BinaryTooling.SplitIntoBytes(i)[0];
+                BinaryFile.AppendToBinary(MetaDataIDMap);
+                i++;
+            }
+            HeaderOffset = HeaderSize + i * MetaDataIDMap.Length;
+
+            int AddressSectionPartitions = (ushort)(DataPartitions / ((MinBracketSize - BracketMetaSizeNoID + 4) / 2));
+            i = 1;
             Span<byte> addressPartition = new byte[ByteSizeOfPartition + 2];
-            while (i < AddressTableOffset) {
+            while (i < AddressSectionPartitions) {
                 Span<byte> byteWiseSplitAddress = BinaryTooling.SplitIntoBytes(i);
                 addressPartition[0] = byteWiseSplitAddress[0];
                 addressPartition[1] = byteWiseSplitAddress[1];
                 BinaryFile.AppendToBinary(addressPartition);
                 i++;
             }
+            AddressTableOffset = HeaderOffset + i * (ByteSizeOfPartition + 2);
+
             i = 1;
             Span<byte> dataPartition = new byte[ByteSizeOfPartition + 2];
-            while (i < AvailablePartitions) {
+            while (i < DataPartitions) {
                 Span<byte> byteWiseSplitAddress = BinaryTooling.SplitIntoBytes(i);
                 dataPartition[0] = byteWiseSplitAddress[0];
                 dataPartition[1] = byteWiseSplitAddress[1];
                 BinaryFile.AppendToBinary(dataPartition);
                 i++;
             }
+            TotalByteMemory = AddressTableOffset + i * (ByteSizeOfPartition + 2);
+            BinaryFile.BinaryByteMaxSize = TotalByteMemory;
 
             return BinaryFile;
         }
 
-        byte[] CreateDiscHeader() 
+        byte[] CreateDiscHeader()
         {
+            byte trackByte = 0;
+
             Span<byte> result = new byte[HeaderSize];
             Span<byte> sizeOfPartition = BinaryTooling.SplitIntoBytes(ByteSizeOfPartition);
-            result[0] = sizeOfPartition[0];
-            result[1] = sizeOfPartition[1];
-            Span<byte> amountOfPartitions = BinaryTooling.SplitIntoBytes(AvailablePartitions);
-            result[2] = amountOfPartitions[0];
-            result[3] = amountOfPartitions[1];
+            result[trackByte++] = sizeOfPartition[0];
+            result[trackByte++] = sizeOfPartition[1];
+            Span<byte> amountOfPartitions = BinaryTooling.SplitIntoBytes(DataPartitions);
+            result[trackByte++] = amountOfPartitions[0];
+            result[trackByte++] = amountOfPartitions[1];
+            result[trackByte++] = amountOfPartitions[2];
+            result[trackByte++] = amountOfPartitions[3];
             Span<byte> FirstMassMemoryAddress = BinaryTooling.SplitIntoBytes(AddressTableOffset);
-            result[4] = FirstMassMemoryAddress[0];
-            result[5] = FirstMassMemoryAddress[1];
-            Span<byte> sizePerAddress = BinaryTooling.SplitIntoBytes(TotalSizePerAddressEntry);
-            result[6] = sizePerAddress[0];
-            result[7] = sizePerAddress[1];
+            result[trackByte++] = FirstMassMemoryAddress[0];
+            result[trackByte++] = FirstMassMemoryAddress[1];
+            Span<byte> sizePerAddress = BinaryTooling.SplitIntoBytes(MinBracketSize);
+            result[trackByte++] = sizePerAddress[0];
+            result[trackByte++] = sizePerAddress[1];
             Span<byte> totalByteMemory = BinaryTooling.SplitIntoBytes(TotalByteMemory);
-            result[8] = totalByteMemory[0];
-            result[9] = totalByteMemory[1];
-            result[10] = totalByteMemory[2];
-            result[11] = totalByteMemory[3];
+            result[trackByte++] = totalByteMemory[0];
+            result[trackByte++] = totalByteMemory[1];
+            result[trackByte++] = totalByteMemory[2];
+            result[trackByte++] = totalByteMemory[3];
             Span<byte> headerSize = BinaryTooling.SplitIntoBytes(HeaderSize);
-            result[12] = headerSize[0];
-            result[13] = headerSize[1];
-            Span<byte> bracketFixedSize = BinaryTooling.SplitIntoBytes(BracketMetadataSize);
-            result[14] = bracketFixedSize[0];
-            result[15] = bracketFixedSize[1];
+            result[trackByte++] = headerSize[0];
+            result[trackByte++] = headerSize[1];
+            Span<byte> bracketFixedSize = BinaryTooling.SplitIntoBytes(BracketMetaSizeNoID);
+            result[trackByte++] = bracketFixedSize[0];
+            result[trackByte++] = bracketFixedSize[1];
+            HeaderSize = trackByte;
             return result.ToArray();
         }
-
 
         internal static byte?[] MakeByteArrayNullable(byte[] input, int[]? nullIndexes = null) {
             byte?[] output = new byte?[input.Length];
@@ -126,18 +146,18 @@ namespace FileSystem.MemoryManager {
             FileInfo windowsFileMetadata = new FileInfo(evaluatedDisc.BinaryFile.GlobalFilePath);
             
             // 1st stage: header evaluation
-            if (windowsFileMetadata.Length < HeaderSize + 2) {
+            if (windowsFileMetadata.Length < evaluatedDisc.HeaderSize + 2) {
                 EventLogger.Report("DISC EVALUATION: Failed. Disc Header is missing");
                 return false;
             };
-            evaluatedDisc.BinaryFile.BinaryByteMaxSize = HeaderSize + 2;
-            byte[] discHeader = evaluatedDisc.BinaryFile.ReadBinaryChunk(0, HeaderSize + 2);
+            evaluatedDisc.BinaryFile.BinaryByteMaxSize = evaluatedDisc.HeaderSize + 2;
+            byte[] discHeader = evaluatedDisc.BinaryFile.ReadBinaryChunk(0, evaluatedDisc.HeaderSize + 2);
             if (BinaryTooling.WeldBytesIntoInt(new byte [] {discHeader[0], discHeader[1]}) != 1) {
                 EventLogger.Report("DISC EVALUATION: Failed. Header address's missing");
                 return false;
             };
 
-            for (byte j = 3; j < HeaderSize; j += 2) {
+            for (byte j = 3; j < evaluatedDisc.HeaderSize; j += 2) {
                 if (j == 11 || j == 13) continue;
                 if (BinaryTooling.WeldBytesIntoInt(new byte [] {discHeader[j - 1], discHeader[j]}) == 0) {
                     EventLogger.Report("DISC EVALUATION: Failed. Embedded parameters are not set");
@@ -164,7 +184,7 @@ namespace FileSystem.MemoryManager {
 
             evaluatedDisc.ByteSizeOfPartition = sizeOfPartition;
             evaluatedDisc.AddressTableOffset = firstMassMemoryPartition;
-            evaluatedDisc.TotalSizePerAddressEntry = sizePerAddress;
+            evaluatedDisc.MinBracketSize = sizePerAddress;
             evaluatedDisc.TotalByteMemory = totalByteMemory;
 
             // 2nd stage: address indexing
@@ -222,26 +242,26 @@ namespace FileSystem.MemoryManager {
     }
 
     class FS {
-        internal DiscAccess TargetDisc;
+        internal DiscAccess targetDisc;
 
-        public FS(DiscAccess targetDisc) {
-            TargetDisc = targetDisc;
+        public FS(DiscAccess discForFS) {
+            targetDisc = discForFS;
         }
 
         internal ushort[] WriteToDisc(ushort startingAddress, Span<byte> input, ushort addPartitionOffset = 0, bool overwrite = true, bool targetMemoryTable = false)
         {
-            int addressesToOverwrite = input.Length / TargetDisc.ByteSizeOfPartition;
-            ushort[] overwrittenAddresses = (input.Length < TargetDisc.ByteSizeOfPartition) ? new ushort[1] : new ushort[addressesToOverwrite];
+            int addressesToOverwrite = input.Length / targetDisc.ByteSizeOfPartition;
+            ushort[] overwrittenAddresses = (input.Length < targetDisc.ByteSizeOfPartition) ? new ushort[1] : new ushort[addressesToOverwrite];
             Span<byte> inputPointers = input;
 
             ushort? targetAddress = startingAddress;
             for (ushort i = 0; i < overwrittenAddresses.Length; i++) {
-                targetAddress = overwrite ? targetAddress : FindPartiallyFreePartition((ushort)(startingAddress + i), (ushort)(TargetDisc.ByteSizeOfPartition - addPartitionOffset), targetMemoryTable).address;
+                targetAddress = overwrite ? targetAddress : FindPartiallyFreePartition((ushort)(startingAddress + i), (ushort)(targetDisc.ByteSizeOfPartition - addPartitionOffset), targetMemoryTable).address;
                 if (targetAddress.HasValue) {
                     overwrittenAddresses[i] = targetAddress.Value;
-                    int writeLength = (i != overwrittenAddresses.Length - 1) ? TargetDisc.ByteSizeOfPartition : inputPointers.Length % TargetDisc.ByteSizeOfPartition;
-                    if (writeLength == 0) writeLength = TargetDisc.ByteSizeOfPartition;
-                    TargetDisc.BinaryFile.WriteToBinary(inputPointers.Slice(i * TargetDisc.ByteSizeOfPartition, writeLength), TargetDisc.GetOffset(targetAddress.Value, addPartitionOffset, targetMemoryTable));
+                    int writeLength = (i != overwrittenAddresses.Length - 1) ? targetDisc.ByteSizeOfPartition : inputPointers.Length % targetDisc.ByteSizeOfPartition;
+                    if (writeLength == 0) writeLength = targetDisc.ByteSizeOfPartition;
+                    targetDisc.BinaryFile.WriteToBinary(inputPointers.Slice(i * targetDisc.ByteSizeOfPartition, writeLength), targetDisc.GetOffset(targetAddress.Value, addPartitionOffset, targetMemoryTable));
                     addPartitionOffset = 0;
                     targetAddress++;
                 } else {
@@ -254,21 +274,21 @@ namespace FileSystem.MemoryManager {
 
         internal byte[] ReadFromDisc(Span<ushort> addresses, ushort readSpan = 0, bool targetMemoryTable = false)
         {
-            if (readSpan == 0) readSpan = TargetDisc.ByteSizeOfPartition;
-            byte[] output = new byte[addresses.Length * TargetDisc.ByteSizeOfPartition];
+            if (readSpan == 0) readSpan = targetDisc.ByteSizeOfPartition;
+            byte[] output = new byte[addresses.Length * targetDisc.ByteSizeOfPartition];
             Span<byte> outputPointers = output;
             for (ushort i = 0; i < addresses.Length; i++) {
-                ReadOnlySpan<byte> singlePartition = TargetDisc.BinaryFile.ReadBinaryChunk(TargetDisc.GetOffset(addresses[i], default, targetMemoryTable), readSpan);
-                singlePartition.CopyTo(outputPointers.Slice(i * TargetDisc.ByteSizeOfPartition, TargetDisc.ByteSizeOfPartition));
+                ReadOnlySpan<byte> singlePartition = targetDisc.BinaryFile.ReadBinaryChunk(targetDisc.GetOffset(addresses[i], default, targetMemoryTable), readSpan);
+                singlePartition.CopyTo(outputPointers.Slice(i * targetDisc.ByteSizeOfPartition, targetDisc.ByteSizeOfPartition));
             }
             return output;
         }
 
         internal byte[] ReadFromDisc(ushort targetAddress, ushort addPartitionOffset = 0, ushort readSpan = 0, bool targetMemoryTable = false)
         {
-            if (readSpan == 0) readSpan = TargetDisc.ByteSizeOfPartition;
-            if (TargetDisc.ByteSizeOfPartition < addPartitionOffset + readSpan) addPartitionOffset = 0;
-            return TargetDisc.BinaryFile.ReadBinaryChunk(TargetDisc.GetOffset(targetAddress, addPartitionOffset, targetMemoryTable), readSpan);
+            if (readSpan == 0) readSpan = targetDisc.ByteSizeOfPartition;
+            if (targetDisc.ByteSizeOfPartition < addPartitionOffset + readSpan) addPartitionOffset = 0;
+            return targetDisc.BinaryFile.ReadBinaryChunk(targetDisc.GetOffset(targetAddress, addPartitionOffset, targetMemoryTable), readSpan);
         }
 
         internal ushort? FindNextFreePartition(ushort startingAddress, bool targetMemoryTable = false)
@@ -279,11 +299,11 @@ namespace FileSystem.MemoryManager {
                 else {
                     if (!targetMemoryTable) {
                         if (freeAddress == startingAddress - 1) return null;
-                        if (freeAddress < DiscAccess.AvailablePartitions) freeAddress++;
-                        else freeAddress = (ushort)(TargetDisc.AddressTableOffset + 1);
+                        if (freeAddress < targetDisc.DataPartitions) freeAddress++;
+                        else freeAddress = (ushort)(targetDisc.AddressTableOffset + 1);
                     } else {
                         if (freeAddress == startingAddress - 1) return null;
-                        if (freeAddress < TargetDisc.AddressTableOffset) freeAddress++;
+                        if (freeAddress < targetDisc.AddressTableOffset) freeAddress++;
                         else freeAddress = 1;
                     }
                 }
@@ -310,10 +330,10 @@ namespace FileSystem.MemoryManager {
                 if (remainingSpaceInPartition >= minimalRequiredSpace) return (semiFreeAddress, remainingSpaceInPartition);
                 else {
                     if (!targetMemoryTable) {
-                        if (semiFreeAddress < DiscAccess.AvailablePartitions) semiFreeAddress++;
-                        else semiFreeAddress = (ushort)(TargetDisc.AddressTableOffset + 1);
+                        if (semiFreeAddress < targetDisc.DataPartitions) semiFreeAddress++;
+                        else semiFreeAddress = (ushort)(targetDisc.AddressTableOffset + 1);
                     } else {
-                        if (semiFreeAddress < TargetDisc.AddressTableOffset) semiFreeAddress++;
+                        if (semiFreeAddress < targetDisc.AddressTableOffset) semiFreeAddress++;
                         else semiFreeAddress = 1;
                     }
                 }
@@ -328,16 +348,16 @@ namespace FileSystem.MemoryManager {
             for (ushort i = 0; i < partitionData.Length; i++) {
                 if (partitionData[i] != 0) lastOccupiedByte = (ushort)(i + 1);
             }
-            return (ushort)(TargetDisc.ByteSizeOfPartition - lastOccupiedByte);
+            return (ushort)(targetDisc.ByteSizeOfPartition - lastOccupiedByte);
         }
 
         internal int[] FindMatchingPatterns(byte?[] targetPattern, bool targetMemoryTable = false) {
             List<int> result = new List<int> ();
-            ushort maxIterations = (!targetMemoryTable) ? DiscAccess.AvailablePartitions : TargetDisc.AddressTableOffset;
+            ushort maxIterations = (!targetMemoryTable) ? (ushort)targetDisc.DataPartitions : (ushort)targetDisc.AddressTableOffset;
 
             for (ushort targetedPartition = 1; targetedPartition < maxIterations; targetedPartition++) {
-                int offset = TargetDisc.GetOffset(targetedPartition, default, targetMemoryTable);
-                Span<byte> binaryChunk = TargetDisc.BinaryFile.ReadBinaryChunk(offset, TargetDisc.ByteSizeOfPartition);
+                int offset = targetDisc.GetOffset(targetedPartition, default, targetMemoryTable);
+                Span<byte> binaryChunk = targetDisc.BinaryFile.ReadBinaryChunk(offset, targetDisc.ByteSizeOfPartition);
 
                 ushort matchingLength = 0;
                 for (ushort i = 0; i < binaryChunk.Length; i++) {
@@ -358,9 +378,9 @@ namespace FileSystem.MemoryManager {
             return result.ToArray();
         }
 
-        internal (ushort[] adresses, ushort[] addedOffset) RegisterAddresses(Span<ushort> addressesToRegister, string upTo15CharID = "") {
+        internal (ushort[] adresses, ushort[] addedOffset) RegisterAddresses(Span<ushort> addressesToRegister) {
 
-            ushort addressAmountPerBracket = (ushort)((TargetDisc.TotalSizePerAddressEntry - DiscAccess.BracketMetadataSize) / 2);
+            ushort addressAmountPerBracket = (ushort)((targetDisc.MinBracketSize - DiscAccess.BracketMetaSizeNoID) / 2);
             ushort bracketsNeeded = (ushort)(addressesToRegister.Length / addressAmountPerBracket + 1);
 
             // if (upTo15CharID == "") upTo15CharID += AddressEntry.BracketCounter;
@@ -370,12 +390,12 @@ namespace FileSystem.MemoryManager {
             ushort ThisManyMoreNeeded = (ushort)(bracketsNeeded - 1);
 
             for (ushort i = 0; i < brackets.Length; i++) {
-                Span<byte> byteNotedAddresses = ((i + 1) * addressAmountPerBracket <= addressesToRegister.Length) ? stackalloc byte[addressAmountPerBracket * 2] : stackalloc byte[(addressesToRegister.Length % addressAmountPerBracket) * 2];
+                Span<byte> byteNotedAddresses = ((i + 1) * addressAmountPerBracket <= addressesToRegister.Length) ? stackalloc byte[addressAmountPerBracket * 2] : stackalloc byte[addressesToRegister.Length % addressAmountPerBracket * 2];
                 for (ushort j = 0; j < byteNotedAddresses.Length / 2; j++) {
                     Span<byte> individualAddress = BinaryTooling.SplitIntoBytes(addressesToRegister[i * addressAmountPerBracket + j]);
                     individualAddress.Slice(0, 2).CopyTo(byteNotedAddresses.Slice(j * 2, 2));
                 }
-                brackets[i] = AddressEntry.BuildBracket(byteNotedAddresses.ToArray(), (byte)(addressAmountPerBracket * 2), upTo15CharID, (byte)ThisManyMoreNeeded);
+                brackets[i] = AddressEntry.BuildBracket(byteNotedAddresses.ToArray(), (byte)(addressAmountPerBracket * 2), (byte)ThisManyMoreNeeded);
                 ThisManyMoreNeeded--;
             }
 
@@ -384,90 +404,23 @@ namespace FileSystem.MemoryManager {
 
             ushort bracketsPushed = 0;
             while (bracketsPushed < bracketsNeeded) {
-                (ushort? address, ushort? remainingSpace) inputToAddress = FindPartiallyFreePartition(1, TargetDisc.TotalSizePerAddressEntry, true);
+                (ushort? address, ushort? remainingSpace) inputToAddress = FindPartiallyFreePartition(1, targetDisc.MinBracketSize, true);
                 if (!inputToAddress.address.HasValue || !inputToAddress.remainingSpace.HasValue) return (new ushort[0], new ushort[0]);
 
-                int bracketWiseSpace = (inputToAddress.remainingSpace.Value / TargetDisc.TotalSizePerAddressEntry < bracketsNeeded - bracketsPushed) ? inputToAddress.remainingSpace.Value / TargetDisc.TotalSizePerAddressEntry : bracketsNeeded - bracketsPushed;
-                Span<byte> inputChunk = new byte[bracketWiseSpace * TargetDisc.TotalSizePerAddressEntry];
+                int bracketWiseSpace = (inputToAddress.remainingSpace.Value / targetDisc.MinBracketSize < bracketsNeeded - bracketsPushed) ? inputToAddress.remainingSpace.Value / targetDisc.MinBracketSize : bracketsNeeded - bracketsPushed;
+                Span<byte> inputChunk = new byte[bracketWiseSpace * targetDisc.MinBracketSize];
 
                 for (byte y = 0; y < bracketWiseSpace; y++)
                 {
-                    brackets[y + bracketsPushed].CopyTo(inputChunk.Slice(y * TargetDisc.TotalSizePerAddressEntry, TargetDisc.TotalSizePerAddressEntry));
+                    brackets[y + bracketsPushed].CopyTo(inputChunk.Slice(y * targetDisc.MinBracketSize, targetDisc.MinBracketSize));
                     overwrittenAddresses[y + bracketsPushed] = inputToAddress.address.Value;
-                    addressOffset[y + bracketsPushed] = (ushort)(TargetDisc.ByteSizeOfPartition - inputToAddress.remainingSpace.Value);
+                    addressOffset[y + bracketsPushed] = (ushort)(targetDisc.ByteSizeOfPartition - inputToAddress.remainingSpace.Value);
                 }
-                bracketsPushed += (ushort)(inputChunk.Length / TargetDisc.TotalSizePerAddressEntry);
-                WriteToDisc(inputToAddress.address.Value, inputChunk, (ushort)(TargetDisc.ByteSizeOfPartition - inputToAddress.remainingSpace.Value), default, true);
+                bracketsPushed += (ushort)(inputChunk.Length / targetDisc.MinBracketSize);
+                WriteToDisc(inputToAddress.address.Value, inputChunk, (ushort)(targetDisc.ByteSizeOfPartition - inputToAddress.remainingSpace.Value), default, true);
             }
 
             return (overwrittenAddresses.ToArray(), addressOffset.ToArray());
-        }
-    }
-
-    class AddressEntry {
-        internal int ID;
-        internal byte Size;
-        internal string Tag = "";
-        internal byte[] Content;
-
-        [Flags] enum DataType : byte {
-            undefined = 0,  // 0b0000
-            chars = 1 << 0, // 0b0001
-            int8 = 1 << 1,  // 0b0010
-            int16 = 1 << 2, // 0b0100
-            int32 = 1 << 3, // 0b1000
-        }
-
-        internal static byte[] BuildBracket(byte[] content, byte contentSize, string upTo15CharID, byte linkedBrackets = 0) {
-            byte tagSize = (byte)upTo15CharID.Length;
-
-            byte[] bracket = new byte[contentSize + DiscAccess.BracketMetadataSize];
-            bracket[0] = 0b1010_0000;
-
-            byte[] ProcessID = BinaryTooling.SplitIntoBytes(new Random().Next(65536, 2147483646));
-            bracket[1] = ProcessID[0];
-            bracket[2] = ProcessID[1];
-            bracket[3] = ProcessID[2];
-            bracket[4] = ProcessID[3];
-            bracket[5] = contentSize;
-
-            bracket[bracket.Length - 1] = (byte)((linkedBrackets < 15) ? linkedBrackets : 15);
-            bracket[bracket.Length - 1] |= 0b1010_0000;
-
-            for (byte i = 0; i < 15; i++) {
-                if (i < tagSize) bracket[i + 6] = TextFormat.PackChar(upTo15CharID[i]);
-                else bracket[i + 6] = 0x05;
-            }
-
-            for (ushort i = 0; i < content.Length; i++) {
-                bracket[i + 21] = content[i];
-                if (i >= contentSize) break;
-            }
-
-            return bracket;
-        }
-
-        internal static AddressEntry? ParseBracket(byte[] content) {
-            AddressEntry bracket = new AddressEntry();
-
-            Span<byte> firstByte = stackalloc byte[2];
-            firstByte = BinaryTooling.BitSplitter(content[0], 2);
-            if (firstByte[1] != 0b0000_1010) { return null; }
-
-            bracket.ID = BinaryTooling.WeldBytesIntoInt(new byte[] {content[1], content[2], content[3], content[4]});
-            bracket.Size = content[3];
-
-            bracket.Tag = "-";
-            for (int i = 0; i <= firstByte[0]; i++){
-                bracket.Tag += TextFormat.UnpackChar(content[i + 6]);
-            }
-
-            bracket.Content = new byte[bracket.Size];
-            for (int i = 0; i < bracket.Size; i++){
-                bracket.Content[i] = content[i + 21];
-            }
-
-            return bracket;
         }
     }
 

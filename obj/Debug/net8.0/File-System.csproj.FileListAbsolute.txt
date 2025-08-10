@@ -1,0 +1,15 @@
+C:\Users\itali\documents\github\File-System\bin\Debug\net8.0\File-System.exe
+C:\Users\itali\documents\github\File-System\bin\Debug\net8.0\File-System.deps.json
+C:\Users\itali\documents\github\File-System\bin\Debug\net8.0\File-System.runtimeconfig.json
+C:\Users\itali\documents\github\File-System\bin\Debug\net8.0\File-System.dll
+C:\Users\itali\documents\github\File-System\bin\Debug\net8.0\File-System.pdb
+C:\Users\itali\documents\github\File-System\obj\Debug\net8.0\File-System.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\itali\documents\github\File-System\obj\Debug\net8.0\File-System.AssemblyInfoInputs.cache
+C:\Users\itali\documents\github\File-System\obj\Debug\net8.0\File-System.AssemblyInfo.cs
+C:\Users\itali\documents\github\File-System\obj\Debug\net8.0\File-System.csproj.CoreCompileInputs.cache
+C:\Users\itali\documents\github\File-System\obj\Debug\net8.0\File-System.sourcelink.json
+C:\Users\itali\documents\github\File-System\obj\Debug\net8.0\File-System.dll
+C:\Users\itali\documents\github\File-System\obj\Debug\net8.0\refint\File-System.dll
+C:\Users\itali\documents\github\File-System\obj\Debug\net8.0\File-System.pdb
+C:\Users\itali\documents\github\File-System\obj\Debug\net8.0\File-System.genruntimeconfig.cache
+C:\Users\itali\documents\github\File-System\obj\Debug\net8.0\ref\File-System.dll

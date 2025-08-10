@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "C:\\Users\\itali\\Documents\\GitHub\\File-System\\File-System.csproj": {}
+    "C:\\Users\\itali\\documents\\github\\File-System\\File-System.csproj": {}
   },
   "projects": {
-    "C:\\Users\\itali\\Documents\\GitHub\\File-System\\File-System.csproj": {
+    "C:\\Users\\itali\\documents\\github\\File-System\\File-System.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "C:\\Users\\itali\\Documents\\GitHub\\File-System\\File-System.csproj",
+        "projectUniqueName": "C:\\Users\\itali\\documents\\github\\File-System\\File-System.csproj",
         "projectName": "File-System",
-        "projectPath": "C:\\Users\\itali\\Documents\\GitHub\\File-System\\File-System.csproj",
+        "projectPath": "C:\\Users\\itali\\documents\\github\\File-System\\File-System.csproj",
         "packagesPath": "C:\\Users\\itali\\.nuget\\packages\\",
-        "outputPath": "C:\\Users\\itali\\Documents\\GitHub\\File-System\\obj\\",
+        "outputPath": "C:\\Users\\itali\\documents\\github\\File-System\\obj\\",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "C:\\Users\\itali\\AppData\\Roaming\\NuGet\\NuGet.Config"
